@@ -2,11 +2,13 @@
 
 An advanced AI-powered technical interviewer application that conducts voice-to-voice, highly interactive, and strictly deduplicated technical interviews based on a candidate's uploaded resume. 
 
+It utilizes **RAG (Retrieval-Augmented Generation)** to parse and store candidate resumes in a FAISS Vector Database, dynamically generating personalized, non-repeating questions based on their exact experience. It evaluates spoken answers in real-time and provides comprehensive feedback.
+
 Built with **React (Vite)** on the frontend and **FastAPI + LangGraph** on the backend. The entire application is fully containerized using **Docker** for seamless deployment and development.
 
 ## 🚀 Architecture
 - **Frontend**: React.js (Vite), CSS3, Web Speech API for voice recognition & synthesis.
-- **Backend**: Python 3.10, FastAPI, LangGraph (Stateful Agentic Workflow), Langchain.
+- **Backend**: Python 3.10, FastAPI, LangGraph (Stateful Agentic Workflow), Langchain, FAISS (Vector DB for RAG).
 - **Infrastructure**: Docker, Docker Compose.
 
 ## 🐳 Running with Docker (Recommended)
