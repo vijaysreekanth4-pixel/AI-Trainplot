@@ -1,9 +1,14 @@
 fastapi
-uvicorn
+uvicorn[standard]
 langchain
 langchain-openai
+langchain-community
+langchain-text-splitters
 langgraph
 faiss-cpu
 pydantic
 python-multipart
 python-dotenv
+pypdf
+duckduckgo-search
+numpy

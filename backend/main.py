@@ -16,6 +16,8 @@ import hashlib
 import json
 import io
 import contextlib
+import sqlite3
+from datetime import datetime
 from typing import TypedDict, List, Optional, Annotated
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Header
@@ -57,6 +59,102 @@ except Exception as e:
 # ── In-memory stores ──────────────────────────────────────────────────
 vector_stores: dict = {}   # resume_session_id → FAISS
 resume_texts: dict = {}    # resume_session_id → raw text (demo mode)
+
+# ── SQLite Database Setup ──────────────────────────────────────────────
+DB_PATH = "interview_results.db"
+
+def init_db():
+    """Initialize SQLite database with required tables."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    
+    # Sessions table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS interview_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT UNIQUE NOT NULL,
+            candidate_name TEXT,
+            domain TEXT,
+            difficulty TEXT,
+            total_questions INTEGER DEFAULT 0,
+            average_score REAL DEFAULT 0,
+            avg_comm_score REAL DEFAULT 0,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            completed_at TEXT
+        )
+    """)
+    
+    # Feedback table (per-question scores)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS interview_feedbacks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            question_number INTEGER,
+            question TEXT,
+            answer TEXT,
+            score INTEGER,
+            comm_score INTEGER,
+            feedback TEXT,
+            correct_answer TEXT,
+            language_feedback TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (session_id) REFERENCES interview_sessions(session_id)
+        )
+    """)
+    
+    conn.commit()
+    conn.close()
+    print("SQLite DB initialized: interview_results.db")
+
+def save_session_to_db(session_id: str, candidate_name: str, domain: str, difficulty: str):
+    """Create a new session record in DB when interview starts."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT OR IGNORE INTO interview_sessions 
+        (session_id, candidate_name, domain, difficulty, created_at)
+        VALUES (?, ?, ?, ?, ?)
+    """, (session_id, candidate_name, domain, difficulty, datetime.now().isoformat()))
+    conn.commit()
+    conn.close()
+
+def save_feedback_to_db(session_id: str, fb: dict):
+    """Save a single Q&A feedback record to DB."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO interview_feedbacks
+        (session_id, question_number, question, answer, score, comm_score, feedback, correct_answer, language_feedback, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        session_id,
+        fb.get("question_number", 0),
+        fb.get("question", ""),
+        fb.get("answer", ""),
+        fb.get("score", 0),
+        fb.get("comm_score", 0),
+        fb.get("feedback", ""),
+        fb.get("correct_answer", ""),
+        fb.get("language_feedback", ""),
+        datetime.now().isoformat()
+    ))
+    conn.commit()
+    conn.close()
+
+def finalize_session_in_db(session_id: str, avg_score: float, avg_comm: float, total_q: int):
+    """Update session with final scores when interview completes."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        UPDATE interview_sessions
+        SET average_score=?, avg_comm_score=?, total_questions=?, completed_at=?
+        WHERE session_id=?
+    """, (avg_score, avg_comm, total_q, datetime.now().isoformat(), session_id))
+    conn.commit()
+    conn.close()
+
+# Initialize DB on startup
+init_db()
 
 # ── Cross-Session Memory ───────────────────────────────────────────────
 HISTORY_FILE = "resume_history.json"
@@ -983,6 +1081,9 @@ async def setup_interview(setup: InterviewSetup):
     intr = _get_interrupted_question(config)
     first_question = intr.get("question", "Tell me about yourself.") if intr else "Tell me about yourself."
 
+    # ── Save session to SQLite DB ──
+    save_session_to_db(thread_id, setup.name, setup.domain, setup.difficulty)
+
     return {
         "session_id": thread_id,
         "status": "Ready",
@@ -1044,6 +1145,18 @@ async def submit_answer(payload: AnswerPayload):
     if not intr and not is_complete:
         is_complete = True
 
+    # ── Save to SQLite DB ──
+    if feedbacks and len(feedbacks) > 0 and q_asked > q_asked_before:
+        # A new feedback record was generated in this turn
+        save_feedback_to_db(payload.session_id, feedbacks[-1])
+
+    if is_complete:
+        all_scores = [f["score"] for f in feedbacks]
+        all_comm = [f.get("comm_score", f["score"]) for f in feedbacks]
+        avg = round(sum(all_scores) / len(all_scores), 1) if all_scores else 0
+        avg_comm = round(sum(all_comm) / len(all_comm), 1) if all_comm else 0
+        finalize_session_in_db(payload.session_id, avg, avg_comm, len(feedbacks))
+
     return {
         "score": score,
         "comm_score": comm_score,
@@ -1086,4 +1199,5 @@ def session_result(session_id: str):
 
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8001)
+    port = int(os.environ.get("PORT", 8001))
+    uvicorn.run("main:app", host="0.0.0.0", port=port)

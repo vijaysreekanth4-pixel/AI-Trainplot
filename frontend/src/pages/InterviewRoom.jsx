@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 
-const API = 'http://localhost:8001/api';
+const API = import.meta.env.VITE_API_URL || 'http://localhost:8001/api';
 
 const INTERVIEWERS = [
   { name: 'Kerin',   role: 'Technical Lead',       img: '/assets/interviewer_f_1.jpg' },
